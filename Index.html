@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Road Dispatch</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Arial, sans-serif; background:#f1f4f9; color:#1c2733; }
+  header { background:#0b5ed7; color:#fff; padding:16px; text-align:center; font-size:20px; font-weight:bold; }
+  .wrap { max-width:520px; margin:0 auto; padding:14px; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:14px; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+  .card h3 { margin:0 0 10px; font-size:16px; color:#0b5ed7; }
+  label { display:block; font-size:13px; margin:10px 0 4px; color:#4a5a6a; }
+  input, select { width:100%; padding:12px; font-size:16px; border:1px solid #c5cfdb; border-radius:8px; background:#fff; }
+  .row { display:flex; gap:10px; }
+  .row > div { flex:1; }
+  button { width:100%; padding:14px; font-size:17px; border:0; border-radius:10px; cursor:pointer; }
+  .add { background:#e7f0ff; color:#0b5ed7; margin-bottom:14px; font-weight:bold; }
+  .remove { background:#ffe7e7; color:#c62828; margin-top:10px; padding:10px; font-size:14px; }
+  .submit { background:#1b8f3a; color:#fff; font-weight:bold; }
+  .submit:disabled { background:#9bb8a5; }
+  #msg { text-align:center; padding:12px; border-radius:8px; margin-top:10px; display:none; font-size:15px; }
+  .ok { background:#e3f6e8; color:#1b6e30; }
+  .err { background:#fde8e8; color:#b3261e; }
+  .hint { font-size:12px; color:#7a8794; margin-top:3px; }
+</style>
+</head>
+<body>
+<header>Road Dispatch Form</header>
+<div class="wrap">
+<form id="f">
+
+  <div class="card">
+    <h3>Access</h3>
+    <label>Access Code (given by admin)</label>
+    <input type="password" id="code" required>
+  </div>
+
+  <div class="card">
+    <h3>Trip Details</h3>
+    <div class="row">
+      <div><label>Date</label><input type="date" id="date" required></div>
+      <div><label>Out Time</label><input type="time" id="outTime" required></div>
+    </div>
+    <label>Route / Destination</label>
+    <select id="route" required></select>
+    <label>Vehicle Number</label>
+    <select id="vehicle" required></select>
+    <label>Driver Name</label>
+    <select id="driver" required></select>
+    <label>Vehicle Photo</label>
+    <input type="file" id="photo" accept="image/*" capture="environment" required>
+    <div class="hint">Take the photo with the timestamp camera.</div>
+  </div>
+
+  <div id="blocks"></div>
+  <button type="button" class="add" id="addBtn">+ Add Client</button>
+
+  <button type="submit" class="submit" id="sendBtn">SUBMIT</button>
+  <div id="msg"></div>
+</form>
+</div>
+
+<script>
+// ===== CHANGE THIS (1): your n8n webhook address =====
+const WEBHOOK_URL = "https://YOUR-NGROK-DOMAIN/webhook/road-dispatch";
+
+// ===== CHANGE THIS (2): your lists =====
+const ROUTES   = ["Delhi", "Mumbai", "Pune", "Jaipur"];
+const VEHICLES = ["DL1C1234", "DL1C5678", "MH12AB1111"];
+const DRIVERS  = ["Ramesh", "Suresh", "Mahesh"];
+const CLIENTS  = ["ABG", "HCG", "AI", "Medanta", "Fortis"];
+const MAX_BLOCKS = 6;
+
+function fillSelect(id, list) {
+  const s = document.getElementById(id);
+  s.innerHTML = '<option value="">-- Select --</option>' +
+    list.map(v => '<option>' + v + '</option>').join('');
+}
+fillSelect("route", ROUTES);
+fillSelect("vehicle", VEHICLES);
+fillSelect("driver", DRIVERS);
+
+// today's date as default
+const today = new Date();
+document.getElementById("date").value =
+  today.getFullYear() + "-" + String(today.getMonth()+1).padStart(2,"0") + "-" + String(today.getDate()).padStart(2,"0");
+
+const blocksDiv = document.getElementById("blocks");
+
+function addBlock() {
+  const count = blocksDiv.children.length;
+  if (count >= MAX_BLOCKS) { alert("Maximum " + MAX_BLOCKS + " clients"); return; }
+  const d = document.createElement("div");
+  d.className = "card block";
+  d.innerHTML =
+    '<h3>Client ' + (count+1) + '</h3>' +
+    '<label>Client Name</label>' +
+    '<select class="c-name" required>' +
+      '<option value="">-- Select --</option>' +
+      CLIENTS.map(v => '<option>' + v + '</option>').join('') +
+    '</select>' +
+    '<div class="row">' +
+      '<div><label>Order Quantity</label><input type="number" class="c-qty" min="0" step="any" required></div>' +
+      '<div><label>Box / Bag No.</label><input type="text" class="c-box" placeholder="B14, B15"></div>' +
+    '</div>' +
+    (count > 0 ? '<button type="button" class="remove">Remove this client</button>' : '');
+  blocksDiv.appendChild(d);
+  const rm = d.querySelector(".remove");
+  if (rm) rm.onclick = function() { d.remove(); renumber(); };
+}
+function renumber() {
+  [...blocksDiv.children].forEach((b, i) => b.querySelector("h3").textContent = "Client " + (i+1));
+}
+addBlock();
+document.getElementById("addBtn").onclick = addBlock;
+
+function show(text, ok) {
+  const m = document.getElementById("msg");
+  m.textContent = text;
+  m.className = ok ? "ok" : "err";
+  m.style.display = "block";
+}
+
+document.getElementById("f").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  const btn = document.getElementById("sendBtn");
+  btn.disabled = true; btn.textContent = "Sending...";
+
+  const clients = [...document.querySelectorAll(".block")].map(b => ({
+    client: b.querySelector(".c-name").value,
+    quantity: b.querySelector(".c-qty").value,
+    box: b.querySelector(".c-box").value.trim()
+  }));
+
+  const fd = new FormData();
+  fd.append("accessCode", document.getElementById("code").value);
+  fd.append("date", document.getElementById("date").value);
+  fd.append("outTime", document.getElementById("outTime").value);
+  fd.append("route", document.getElementById("route").value);
+  fd.append("vehicle", document.getElementById("vehicle").value);
+  fd.append("driver", document.getElementById("driver").value);
+  fd.append("clients", JSON.stringify(clients));
+  fd.append("photo", document.getElementById("photo").files[0]);
+  fd.append("submissionId", Date.now() + "-" + Math.random().toString(36).slice(2,8));
+
+  try {
+    const r = await fetch(WEBHOOK_URL, { method: "POST", body: fd });
+    if (!r.ok) throw new Error("Server said " + r.status);
+    show("Submitted successfully. Telegram message is on its way.", true);
+    document.getElementById("f").reset();
+    blocksDiv.innerHTML = ""; addBlock();
+  } catch (err) {
+    show("Could not send: " + err.message + ". Please try again.", false);
+  }
+  btn.disabled = false; btn.textContent = "SUBMIT";
+});
+</script>
+</body>
+</html>
